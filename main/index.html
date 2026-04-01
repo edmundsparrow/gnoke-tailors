@@ -1,1 +1,815 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Gnoke Tailors</title>
 
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Playfair+Display:wght@600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet"       href="../style.css" />
+  <link rel="icon"             type="image/png" href="../global.png" />
+  <link rel="apple-touch-icon" href="../global.png" />
+  <link rel="manifest"         href="../manifest.json" />
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
+
+  <script>
+    (function () {
+      var t = localStorage.getItem('gnoke_tailors_theme');
+      if (t) document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('../sw.js');
+    }
+  </script>
+
+  <style>
+    /* ── Tailors-specific tokens ── */
+    :root {
+      --accent:     #3d2fa0;
+      --accent-dk:  #2e2278;
+      --accent-lt:  #eeebfa;
+      --accent-txt: #2a1f70;
+      --accent-dim: color-mix(in srgb, var(--accent) 10%, transparent);
+      --pending:    #c07c00;
+      --pending-lt: #fff6e0;
+    }
+
+    /* ── Calendar grid ── */
+    #cal-strip {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      margin-bottom: 14px;
+      overflow: hidden;
+    }
+    .cal-header {
+      display: flex; align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .cal-month-label {
+      font-family: var(--font-display);
+      font-size: .95rem; font-weight: 700; color: var(--text);
+    }
+    .cal-nav {
+      background: none; border: 1px solid var(--border);
+      border-radius: 6px; width: 28px; height: 28px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.1rem; cursor: pointer; color: var(--muted);
+      transition: all var(--transition); line-height: 1;
+    }
+    .cal-nav:hover { border-color: var(--accent); color: var(--accent); }
+
+    .cal-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 0;
+    }
+    .cal-daylabel {
+      font-family: var(--font-mono);
+      font-size: .58rem; letter-spacing: .06em;
+      text-transform: uppercase; color: var(--muted);
+      text-align: center; padding: 6px 0 5px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface2);
+    }
+    .cal-cell {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 7px 4px 6px; min-height: 46px;
+      cursor: pointer; gap: 3px;
+      border-right: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      transition: background var(--transition);
+      position: relative;
+    }
+    .cal-cell:nth-child(7n) { border-right: none; }
+    .cal-cell:hover:not(.cal-ghost) { background: var(--accent-lt); }
+    .cal-cell.active {
+      background: var(--accent);
+    }
+    .cal-cell.active .cal-num { color: #fff; }
+    .cal-cell.today:not(.active) .cal-num {
+      color: var(--accent); font-weight: 800;
+    }
+    .cal-cell.today:not(.active)::before {
+      content: ''; position: absolute; top: 5px; right: 5px;
+      width: 5px; height: 5px; border-radius: 50%;
+      background: var(--accent);
+    }
+    .cal-cell.overdue-day { background: var(--red-lt); }
+    .cal-cell.overdue-day.active { background: var(--red); }
+    .cal-cell.cal-ghost {
+      cursor: default; background: var(--bg2);
+      border-color: var(--border);
+    }
+    .cal-cell.cal-ghost .cal-num { color: var(--border2); font-size: .8rem; }
+    .cal-num { font-size: .88rem; font-weight: 700; color: var(--text); line-height: 1; }
+    .cal-dot { width: 4px; height: 4px; border-radius: 50%; }
+    .cal-dot.dot-has     { background: var(--pending); }
+    .cal-dot.dot-overdue { background: var(--red); }
+    .cal-cell.active .cal-dot.dot-has,
+    .cal-cell.active .cal-dot.dot-overdue { background: rgba(255,255,255,.7); }
+
+    /* ── Alert banner ── */
+    .alert-strip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: var(--radius);
+      font-size: .8rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+    .alert-strip.overdue {
+      background: var(--red-lt);
+      color: var(--red);
+      border: 1px solid color-mix(in srgb, var(--red) 20%, transparent);
+    }
+
+    /* ── Date heading ── */
+    .date-heading {
+      display: flex; align-items: center;
+      justify-content: space-between;
+      margin: 14px 0 10px;
+    }
+    #date-label {
+      font-family: var(--font-mono);
+      font-size: .68rem; letter-spacing: .1em;
+      text-transform: uppercase; color: var(--muted);
+    }
+    #count-pill {
+      font-family: var(--font-mono);
+      font-size: .62rem; font-weight: 500;
+      padding: 2px 9px; border-radius: 20px;
+      background: var(--accent-lt); color: var(--accent-txt);
+      border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+    }
+
+    /* ── Order cards ── */
+    .order-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      margin-bottom: 10px;
+      border-left: 5px solid var(--border2);
+      overflow: hidden;
+      transition: border-color var(--transition);
+    }
+    .order-card.ready   { border-left-color: var(--green); }
+    .order-card.overdue { border-left-color: var(--red); }
+    .order-card.pending { border-left-color: var(--pending); }
+
+    .card-top {
+      display: flex; align-items: center; gap: 12px;
+      padding: 13px 14px; cursor: pointer;
+    }
+    .fabric-swatch {
+      width: 48px; height: 48px; border-radius: var(--radius);
+      background: var(--surface2);
+      flex-shrink: 0; display: flex;
+      align-items: center; justify-content: center;
+      font-size: 20px; border: 1px solid var(--border);
+    }
+    .card-info { flex: 1; min-width: 0; }
+    .cust-name {
+      font-size: .95rem; font-weight: 700;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .style-tag {
+      display: inline-block; margin-top: 2px;
+      font-family: var(--font-mono); font-size: .62rem;
+      letter-spacing: .04em; color: var(--muted);
+      background: var(--surface2); padding: 1px 7px;
+      border-radius: 5px; border: 1px solid var(--border);
+    }
+    .status-row { margin-top: 4px; }
+    .s-chip {
+      display: inline-block; font-family: var(--font-mono);
+      font-size: .58rem; letter-spacing: .06em;
+      text-transform: uppercase; padding: 2px 7px;
+      border-radius: 4px; font-weight: 500;
+    }
+    .chip-ready  { background: var(--green-lt); color: var(--green); }
+    .chip-overdue{ background: var(--red-lt);   color: var(--red); }
+    .chip-sewing { background: var(--pending-lt); color: var(--pending); }
+
+    .card-bal {
+      font-family: var(--font-mono);
+      font-size: .9rem; font-weight: 500;
+      color: var(--accent); flex-shrink: 0;
+    }
+
+    .card-detail {
+      display: none;
+      border-top: 1px dashed var(--border);
+      padding: 14px;
+    }
+    .order-card.expanded .card-detail { display: block; }
+    .detail-label {
+      font-family: var(--font-mono);
+      font-size: .6rem; letter-spacing: .1em;
+      text-transform: uppercase; color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .memo-text {
+      font-size: .82rem; line-height: 1.65;
+      background: #fdfcf0; border-left: 3px solid var(--pending);
+      padding: 10px 12px;
+      border-radius: 0 var(--radius) var(--radius) 0;
+      white-space: pre-wrap; color: var(--text2);
+    }
+    .action-row { display: flex; gap: 8px; margin-top: 12px; }
+    .act-btn {
+      flex: 1; padding: 8px 10px;
+      border-radius: 8px; border: 1px solid var(--border);
+      background: var(--surface2); color: var(--text);
+      font-family: var(--font-sans); font-size: .75rem;
+      font-weight: 600; cursor: pointer;
+      transition: all var(--transition);
+    }
+    .act-btn.btn-toggle { background: var(--green); color: #fff; border-color: var(--green); }
+    .act-btn.btn-del    { flex: 0; background: var(--red-lt); color: var(--red); border-color: transparent; }
+    .act-btn.btn-wa     { flex: 0; background: #e8fdf1; color: #128c42; border-color: transparent; font-size: 1rem; }
+
+    /* ── Money page ── */
+    .money-hero {
+      background: var(--accent);
+      border-radius: var(--radius-lg);
+      padding: 24px; text-align: center; color: #fff;
+      margin-bottom: 16px;
+    }
+    .money-label {
+      font-family: var(--font-mono);
+      font-size: .62rem; letter-spacing: .14em;
+      text-transform: uppercase; opacity: .6; margin-bottom: 6px;
+    }
+    #money-owed { font-family: var(--font-display); font-size: 2.4rem; font-weight: 700; }
+    .money-sub  { font-size: .72rem; opacity: .5; margin-top: 4px; }
+
+    .stats-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 10px; margin-bottom: 20px;
+    }
+    .stat-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 14px;
+    }
+    .stat-label {
+      font-family: var(--font-mono);
+      font-size: .6rem; letter-spacing: .1em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
+    }
+    .stat-value {
+      font-family: var(--font-display);
+      font-size: 1.5rem; font-weight: 700; color: var(--text);
+    }
+    .stat-value.green { color: var(--green); }
+    .stat-value.red   { color: var(--red); }
+    .stat-value.amber { color: var(--pending); font-size: 1.1rem; }
+
+    .section-label {
+      font-family: var(--font-mono);
+      font-size: .6rem; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--muted);
+      margin: 20px 0 10px;
+    }
+    .debtor-row {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 12px 14px;
+      display: flex; align-items: center;
+      justify-content: space-between; margin-bottom: 8px;
+    }
+    .debtor-name { font-size: .9rem; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+    .debtor-meta { font-size: .72rem; color: var(--muted); margin-top: 2px; }
+    .debtor-amt  {
+      font-family: var(--font-mono); font-size: .9rem; font-weight: 500;
+      color: var(--red);
+    }
+
+    /* ── Add order form ── */
+    .form-section { margin-bottom: 20px; }
+    .form-section .form-card { padding: 18px; }
+    #autocomplete-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-top: 4px; overflow: hidden;
+      display: none;
+    }
+    .ac-item {
+      padding: 10px 12px;
+      font-size: .84rem; font-weight: 600;
+      cursor: pointer; border-bottom: 1px solid var(--border);
+      transition: background var(--transition);
+    }
+    .ac-item:last-child { border-bottom: none; }
+    .ac-item:hover { background: var(--accent-lt); color: var(--accent); }
+
+    /* ── Customers ── */
+    .cust-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 14px;
+      margin-bottom: 10px; cursor: pointer;
+      transition: border-color var(--transition);
+    }
+    .cust-card:hover { border-color: var(--accent); }
+    .cust-top { display: flex; align-items: center; gap: 12px; }
+    .cust-avatar {
+      width: 42px; height: 42px; border-radius: 50%;
+      background: var(--accent); color: #fff;
+      font-size: .88rem; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; letter-spacing: .02em;
+    }
+    .cust-meta { flex: 1; }
+    .cust-meta-name { font-size: .9rem; font-weight: 700; }
+    .cust-meta-sub  { font-size: .72rem; color: var(--muted); margin-top: 2px; }
+    .cust-count {
+      font-family: var(--font-mono); font-size: .72rem;
+      color: var(--accent); font-weight: 500;
+    }
+    .cust-history {
+      display: none;
+      border-top: 1px dashed var(--border);
+      margin-top: 12px; padding-top: 12px;
+    }
+    .cust-card.expanded .cust-history { display: block; }
+    .hist-item {
+      display: flex; justify-content: space-between;
+      font-size: .78rem; color: var(--muted);
+      padding: 5px 0; border-bottom: 1px solid var(--border);
+    }
+    .hist-item:last-child { border-bottom: none; }
+    .hist-item strong { color: var(--text); }
+
+    /* ── Settings ── */
+    .setting-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 18px; margin-bottom: 14px; }
+    .setting-title { font-size: .9rem; font-weight: 700; margin-bottom: 4px; }
+    .setting-desc  { font-size: .78rem; color: var(--muted); line-height: 1.6; margin-bottom: 14px; }
+
+    /* ── Empty states ── */
+    .empty-state {
+      text-align: center;
+      padding: 48px 20px;
+      color: var(--muted);
+    }
+    .empty-icon { font-size: 2.4rem; margin-bottom: 12px; }
+    .empty-state p { font-size: .84rem; font-weight: 300; line-height: 1.6; }
+    }
+</style>
+</head>
+<body>
+
+<!-- LOADING OVERLAY -->
+<div id="loading-overlay">
+  <div class="loader-dots">
+    <div class="loader-dot"></div>
+    <div class="loader-dot"></div>
+    <div class="loader-dot"></div>
+  </div>
+  <span class="loader-text">Loading Tailors…</span>
+</div>
+
+
+<!-- TOPBAR -->
+<div id="topbar">
+  <button id="hamburger" title="Menu">&#9776;</button>
+
+  <div id="brand">
+    <span id="brand-gnoke">Gnoke</span>
+    <span id="brand-app">Tailors</span>
+  </div>
+
+  <span id="context-info"></span>
+  <div class="topbar-spacer"></div>
+
+  <div class="menu-group" id="menu-group">
+
+    <div class="menu">
+      <button class="menu-btn">Jobs</button>
+      <div class="menu-content">
+        <button id="nav-jobs">📅 Deadlines</button>
+        <button id="nav-add">➕ New Order</button>
+      </div>
+    </div>
+
+    <div class="menu">
+      <button class="menu-btn">View</button>
+      <div class="menu-content">
+        <button id="nav-money">💰 Money</button>
+        <button id="nav-customers">👥 Customers</button>
+      </div>
+    </div>
+
+    <div class="menu">
+      <button class="menu-btn">About</button>
+      <div class="menu-content">
+        <button id="nav-settings">⚙️ Settings</button>
+        <button id="nav-about">ℹ️ About</button>
+      </div>
+    </div>
+
+  </div>
+
+  <div id="topbar-right">
+    <span id="status-chip">saved</span>
+    <button class="icon-btn" id="theme-toggle" title="Toggle theme">🌙</button>
+  </div>
+</div>
+
+
+<!-- PAGE CONTAINER -->
+<main class="pages">
+
+  <!-- ── JOBS / DEADLINES ───────────────────────────────── -->
+  <section id="jobs-page" class="page active">
+    <div class="page-content">
+
+      <div class="page-header">
+        <div>
+          <h1>Deadlines</h1>
+          <p class="sub">Tap a day to see what's due</p>
+        </div>
+        <button class="btn btn-primary" id="bnav-add-header">+ New order</button>
+      </div>
+
+      <!-- Overdue banner -->
+      <div id="overdue-banner" class="alert-strip overdue" style="display:none">
+        ⚠️ <span id="overdue-text"></span>
+      </div>
+
+      <!-- Calendar strip -->
+      <div id="cal-strip"></div>
+
+      <!-- Job list -->
+      <div class="date-heading">
+        <span id="date-label">Due today</span>
+        <span id="count-pill">0</span>
+      </div>
+      <div id="job-list"></div>
+
+    </div>
+  </section>
+
+
+  <!-- ── ADD ORDER ──────────────────────────────────────── -->
+  <section id="add-page" class="page">
+    <div class="page-content">
+
+      <div class="page-header">
+        <div>
+          <h1>New Order</h1>
+          <p class="sub">Add a job to the ledger</p>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-card">
+          <div class="form-group">
+            <label>Customer name</label>
+            <input type="text" id="in-name" placeholder="e.g. Emmanuel Adeyemi" autocomplete="off" />
+            <div id="autocomplete-box"></div>
+          </div>
+          <div class="form-group">
+            <label>Phone number</label>
+            <input type="tel" id="in-phone" placeholder="e.g. 08012345678" autocomplete="tel" />
+          </div>
+          <div class="form-group">
+            <label>Style</label>
+            <input type="text" id="in-style" placeholder="e.g. Senator, Kaftan, Agbada" />
+          </div>
+          <div class="form-group">
+            <label>Measurements &amp; Notes</label>
+            <textarea id="in-notes" rows="5"
+              placeholder="Write freely… Chest: 42, Length: 44, Short sleeve, Two pockets, Navy fabric"></textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group" style="margin:0">
+              <label>Total (₦)</label>
+              <input type="number" id="in-price" placeholder="0" />
+            </div>
+            <div class="form-group" style="margin:0">
+              <label>Deposit (₦)</label>
+              <input type="number" id="in-deposit" placeholder="0" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group" style="margin:0">
+              <label>Due date</label>
+              <input type="date" id="in-date" />
+            </div>
+            <div class="form-group" style="margin:0">
+              <label>Fabric photo</label>
+              <div class="fabric-passport" id="fabric-passport" onclick="showSnapUnavailable()">
+                <div class="fabric-passport-inner" id="fabric-passport-inner">
+                  <svg class="fabric-passport-placeholder" viewBox="0 0 40 40" fill="none">
+                    <rect x="4" y="4" width="32" height="32" rx="4" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 3"/>
+                    <circle cx="20" cy="16" r="5" stroke="currentColor" stroke-width="1.5"/>
+                    <path d="M10 34c0-5.5 4.5-10 10-10s10 4.5 10 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                  </svg>
+                  <span class="fabric-passport-label">Tap to add<br>fabric photo</span>
+                </div>
+              </div>
+              <input type="file" id="in-swatch-file" accept="image/*" capture="environment" style="display:none" onchange="handleFabricPhoto(this)" />
+              <input type="hidden" id="in-swatch" value="" />
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;margin-top:12px">
+            <button class="btn btn-primary btn-sm" id="btn-save-order" title="Save order">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+
+  <!-- ── MONEY ─────────────────────────────────────────── -->
+  <section id="money-page" class="page">
+    <div class="page-content">
+
+      <div class="page-header">
+        <div>
+          <h1>Money</h1>
+          <p class="sub">Finished work waiting to be collected</p>
+        </div>
+      </div>
+
+      <div class="money-hero">
+        <div class="money-label">Outstanding balance</div>
+        <div id="money-owed">₦0</div>
+        <div class="money-sub">Collect your money 💰</div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Total jobs</div>
+          <div class="stat-value" id="stat-total">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Finished</div>
+          <div class="stat-value green" id="stat-done">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Overdue</div>
+          <div class="stat-value red" id="stat-overdue">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Deposits in</div>
+          <div class="stat-value amber" id="stat-deposits">₦0</div>
+        </div>
+      </div>
+
+      <div class="section-label">Don't let this go late ⚠️</div>
+      <div id="debtor-list"></div>
+
+    </div>
+  </section>
+
+
+  <!-- ── CUSTOMERS ─────────────────────────────────────── -->
+  <section id="customers-page" class="page">
+    <div class="page-content">
+
+      <div class="page-header">
+        <div>
+          <h1>Customers</h1>
+          <p class="sub">History and measurements on file</p>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <input type="search" id="cust-search" placeholder="Search customer…" />
+      </div>
+      <div id="cust-list"></div>
+
+    </div>
+  </section>
+
+
+  <!-- ── SETTINGS ───────────────────────────────────────── -->
+  <section id="settings-page" class="page">
+    <div class="page-content">
+
+      <div class="page-header">
+        <div>
+          <h1>Settings</h1>
+          <p class="sub">Backup, restore, and data</p>
+        </div>
+      </div>
+
+      <div class="setting-card">
+        <div class="setting-title">🔒 Export backup</div>
+        <div class="setting-desc">
+          Save all your orders as a JSON file. If you change phones, import this file to restore everything.
+        </div>
+        <button class="btn btn-primary" id="btn-export">Export backup file</button>
+      </div>
+
+      <div class="setting-card">
+        <div class="setting-title">📂 Import backup</div>
+        <div class="setting-desc">
+          Import a previously exported JSON file. Orders will be added to your existing data.
+        </div>
+        <label class="btn btn-ghost" style="cursor:pointer" for="import-file">Choose backup file</label>
+        <input type="file" id="import-file" accept=".json" style="display:none" />
+      </div>
+
+      <div class="setting-card">
+        <div class="setting-title">🗑️ Clear all data</div>
+        <div class="setting-desc">
+          Permanently delete everything. Export a backup first — this cannot be undone.
+        </div>
+        <button class="btn btn-danger" id="btn-clear">Delete everything</button>
+      </div>
+
+    </div>
+  </section>
+
+
+  <!-- ── ABOUT ─────────────────────────────────────────── -->
+  <section id="about-page" class="page">
+    <div class="page-content">
+
+      <div class="page-header">
+        <div>
+          <h1>About</h1>
+          <p class="sub">Gnoke Tailors · v1.0</p>
+        </div>
+        <button class="btn btn-ghost" id="btn-check-update">🔄 Check for updates</button>
+      </div>
+
+      <div class="card-grid">
+
+        <div class="form-card">
+          <h2 class="card-title">✂️ Gnoke Tailors</h2>
+          <p class="hint">
+            A focused business tool for tailors — deadlines, customer memory,
+            and money clarity. No cloud. No account. No ads.<br /><br />
+            Your data never leaves the device.
+          </p>
+        </div>
+
+        <div class="form-card">
+          <h2 class="card-title">⚙️ Under the hood</h2>
+          <table class="about-table">
+            <tbody id="about-tech-table"></tbody>
+          </table>
+        </div>
+
+        <div class="form-card">
+          <h2 class="card-title">👤 Author</h2>
+          <p class="hint">
+            <strong>Edmund Sparrow</strong><br />
+            Part of the <strong>Gnoke Suite</strong> — offline-first tools
+            for independent builders in Africa and beyond.
+          </p>
+          <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">
+            <a class="btn btn-outline" href="/cdn-cgi/l/email-protection#4b2e2f263e252f383b2a3939243c0b2c262a222765282426">✉ Email</a>
+            <a class="btn btn-outline" href="https://github.com/edmundsparrow" target="_blank" rel="noopener">⌥ GitHub</a>
+            <a class="btn btn-outline" href="https://selar.com/showlove/edmundsparrow" target="_blank" rel="noopener">❤️ Coffee</a>
+          </div>
+        </div>
+
+        <div class="form-card" id="update-card">
+          <h2 class="card-title">🔄 Updates</h2>
+          <p class="hint">
+            Running <strong>v1.0</strong>.
+            Click "Check for updates" above to compare with the latest release.
+          </p>
+        </div>
+
+        <div class="form-card">
+          <h2 class="card-title">📜 License</h2>
+          <p class="hint">
+            Free and open source under the
+            <strong>GNU General Public License v3.0</strong>.<br /><br />
+            Use it, modify it, share it — but keep it open.
+          </p>
+          <p class="hint" style="margin-top:10px;font-family:var(--font-mono);font-size:.66rem;color:var(--muted)">
+            © 2026 Edmund Sparrow — Gnoke Suite
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+</main>
+
+
+<!-- FABRIC PHOTO MODAL (Available on request) -->
+<div class="modal-overlay" id="snap-modal">
+  <div class="modal">
+    <span class="snap-modal-icon">📷</span>
+    <h3>Fabric Photo</h3>
+    <p class="snap-modal-sub">
+      Attach a passport-style photo of the customer's fabric for quick identification on every order card.
+    </p>
+    <div class="snap-modal-tag">Available on request</div>
+    <div class="modal-actions" style="justify-content:center">
+      <button class="btn btn-ghost btn-sm" onclick="UI.closeModal('snap-modal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- DRAWER -->
+<!-- DRAWER -->
+<div id="drawer-overlay"></div>
+<nav id="drawer" aria-label="Navigation">
+  <div id="drawer-header">
+    <div id="drawer-brand">
+      <span id="drawer-gnoke">Gnoke</span>
+      <span id="drawer-app">Tailors</span>
+    </div>
+    <button id="drawer-close" title="Close">✕</button>
+  </div>
+
+  <div class="drawer-section">Jobs</div>
+  <button class="drawer-btn" onclick="loadPage('jobs-page'); Drawer.close();">📅 Deadlines</button>
+  <button class="drawer-btn" onclick="loadPage('add-page'); Drawer.close();">➕ New Order</button>
+
+  <div class="drawer-section">View</div>
+  <button class="drawer-btn" onclick="loadPage('money-page'); Drawer.close();">💰 Money</button>
+  <button class="drawer-btn" onclick="loadPage('customers-page'); Drawer.close();">👥 Customers</button>
+
+  <div class="drawer-section">More</div>
+  <button class="drawer-btn" onclick="loadPage('settings-page'); Drawer.close();">⚙️ Settings</button>
+  <button class="drawer-btn" onclick="loadPage('about-page'); Drawer.close();">ℹ️ About</button>
+</nav>
+
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+
+<!-- SCRIPTS — mandatory load order -->
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script src="../js/state.js"></script>
+<script src="../js/theme.js"></script>
+<script src="../js/ui.js"></script>
+<script src="../js/db-core.js"></script>
+<script src="../js/db-orders.js"></script>
+<script src="../js/render.js"></script>
+<script src="../js/update.js"></script>
+<script src="../js/app.js"></script>
+
+<!-- Wire the header "New order" shortcut -->
+<script>
+  // Wire the header "New order" shortcut 
+  document.getElementById('bnav-add-header')?.addEventListener('click', () => {
+    if (typeof loadPage === 'function') {
+      loadPage('add-page');
+    }
+  });
+
+  // ── Global Initializer ──────────────────────────────────────
+  window.addEventListener('DOMContentLoaded', () => {
+    // Initialize Theme
+    if (window.Theme) Theme.init();
+    
+    // Initialize UI and Navigation
+    if (window.UI) UI.init();
+    
+    // Check for existing database or setup
+    if (window.DB) {
+      DB.init().then(() => {
+        console.log("Gnoke Tailors: Database Ready.");
+        if (window.App) App.refreshAll();
+      }).catch(err => {
+        console.error("Database failed to initialize:", err);
+      });
+    }
+
+    // Hide Loading Overlay
+    const loader = document.getElementById('loading-overlay');
+    if (loader) {
+      setTimeout(() => {
+        loader.style.opacity = '0';
+        setTimeout(() => loader.remove(), 400);
+      }, 800);
+    }
+  });
+
+  // Handle Hardware Back Button (for Android PWA)
+  window.addEventListener('popstate', (e) => {
+    if (e.state && e.state.page) {
+      loadPage(e.state.page, false);
+    }
+  });
+</script>
+
+</body>
+</html>
