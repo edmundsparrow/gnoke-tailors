@@ -1,4 +1,4 @@
-# ✂️ Gnoke Stitches
+# ✂️ Gnoke Tailors
 
 A focused business tool for tailors — deadlines, customer memory, and money clarity.
 
