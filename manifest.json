@@ -1,0 +1,13 @@
+{
+  "name": "Gnoke Tailors",
+  "short_name": "Tailors",
+  "description": "Tailor business tool — deadlines, customers, money.",
+  "start_url": "/main/",
+  "display": "standalone",
+  "background_color": "#f7f2ec",
+  "theme_color": "#3d2fa0",
+  "icons": [
+    { "src": "global.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "global.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
