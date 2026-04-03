@@ -24,6 +24,53 @@ const Orders = (() => {
 
   const today = () => new Date().toISOString().split('T')[0];
 
+  async function update(id, o) {
+    DB.run(
+      `UPDATE orders
+       SET name=?, phone=?, style=?, notes=?, price=?, deposit=?, due_date=?, swatch=?
+       WHERE id=?`,
+      [o.name, o.phone || '', o.style || '', o.notes || '',
+       o.price || 0, o.deposit || 0, o.due_date, o.swatch || '', id]
+    );
+    await DB.persist();
+  }
+
+  function earnings(period) {
+    // period: 'week' | 'month' | 'year'
+    const t = today();
+    let from;
+    if (period === 'week') {
+      const d = new Date(t);
+      d.setDate(d.getDate() - d.getDay()); // start of week (Sun)
+      from = d.toISOString().split('T')[0];
+    } else if (period === 'month') {
+      from = t.substring(0, 7) + '-01';
+    } else {
+      from = t.substring(0, 4) + '-01-01';
+    }
+
+    // Completed orders whose due_date falls in the period
+    const completed = DB.query(
+      `SELECT * FROM orders WHERE ready = 1 AND due_date >= ? AND due_date <= ?
+       ORDER BY due_date DESC`,
+      [from, t]
+    );
+
+    // All orders created in the period (regardless of ready status)
+    const created = DB.query(
+      `SELECT * FROM orders WHERE date(created_at) >= ? AND date(created_at) <= ?`,
+      [from, t]
+    );
+
+    const totalValue    = completed.reduce((s, o) => s + o.price, 0);
+    const totalCollected = completed.reduce((s, o) => s + o.price, 0); // full price when marked ready
+    const depositsIn    = created.reduce((s, o) => s + o.deposit, 0);
+    const jobsFinished  = completed.length;
+    const jobsCreated   = created.length;
+
+    return { completed, totalValue, totalCollected, depositsIn, jobsFinished, jobsCreated, from, to: t };
+  }
+
   async function add(o) {
     DB.run(
       `INSERT INTO orders (name, phone, style, notes, price, deposit, due_date, swatch, ready)
@@ -91,7 +138,7 @@ const Orders = (() => {
     return new Set(rows.map(r => r.due_date));
   }
 
-  return { add, forDate, toggle, remove, overdue, allReady, stats, debtors, datesWithJobs };
+  return { add, update, forDate, toggle, remove, overdue, allReady, stats, debtors, datesWithJobs, earnings };
 
 })();
 

@@ -204,6 +204,7 @@ const Render = (() => {
               <button class="act-btn btn-toggle" data-id="${o.id}">
                 ${o.ready ? 'Mark as sewing' : 'Mark as finished'}
               </button>
+              <button class="act-btn btn-edit" data-id="${o.id}" title="Edit order">✏️</button>
               <button class="act-btn btn-wa" data-id="${o.id}">📲</button>
               <button class="act-btn btn-del" data-id="${o.id}">🗑</button>
             </div>
@@ -215,10 +216,10 @@ const Render = (() => {
   /* ── Money page ─────────────────────────────────────────────── */
 
   function money() {
-    const s       = Orders.stats();
-    const ready   = Orders.allReady();
-    const debtors = Orders.debtors();
-    const todayS  = today();
+    const s        = Orders.stats();
+    const ready    = Orders.allReady();
+    const debtors  = Orders.debtors();
+    const todayS   = today();
     const totalOwed = ready.reduce((sum, o) => sum + (o.price - o.deposit), 0);
 
     const setEl = (id, v) => {
@@ -226,29 +227,82 @@ const Render = (() => {
       if (el) el.textContent = v;
     };
 
-    setEl('money-owed',      _fmt(totalOwed));
-    setEl('stat-total',      s.total);
-    setEl('stat-done',       s.done);
-    setEl('stat-overdue',    s.overdue);
-    setEl('stat-deposits',   _fmt(s.deposits));
+    setEl('money-owed',    _fmt(totalOwed));
+    setEl('stat-total',    s.total);
+    setEl('stat-done',     s.done);
+    setEl('stat-overdue',  s.overdue);
+    setEl('stat-deposits', _fmt(s.deposits));
 
+    // Debtors list
     const dl = document.getElementById('debtor-list');
-    if (!dl) return;
-    if (!debtors.length) {
-      dl.innerHTML = `<div class="empty-state" style="padding:20px"><p>No outstanding balances 🎉</p></div>`;
-      return;
+    if (dl) {
+      if (!debtors.length) {
+        dl.innerHTML = `<div class="empty-state" style="padding:20px"><p>No outstanding balances 🎉</p></div>`;
+      } else {
+        dl.innerHTML = debtors.map(o => {
+          const bal  = o.price - o.deposit;
+          const flag = o.due_date < todayS ? ' <span class="chip-overdue s-chip">Overdue</span>' : '';
+          return `<div class="debtor-row">
+            <div>
+              <div class="debtor-name">${o.name}${flag}</div>
+              <div class="debtor-meta">${o.style} · Due ${o.due_date}</div>
+            </div>
+            <div class="debtor-amt">${_fmt(bal)}</div>
+          </div>`;
+        }).join('');
+      }
     }
-    dl.innerHTML = debtors.map(o => {
-      const bal  = o.price - o.deposit;
-      const flag = o.due_date < todayS ? ' <span class="chip-overdue s-chip">Overdue</span>' : '';
-      return `<div class="debtor-row">
-        <div>
-          <div class="debtor-name">${o.name}${flag}</div>
-          <div class="debtor-meta">${o.style} · Due ${o.due_date}</div>
+
+    // Earnings section — driven by active period tab
+    _renderEarnings();
+  }
+
+  function _renderEarnings() {
+    const period = State.get('earningsPeriod') || 'month';
+
+    // Sync tab active state
+    document.querySelectorAll('.earn-tab').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.period === period);
+    });
+
+    const e    = Orders.earnings(period);
+    const wrap = document.getElementById('earnings-body');
+    if (!wrap) return;
+
+    const periodLabel = { week: 'This week', month: 'This month', year: 'This year' }[period];
+
+    wrap.innerHTML = `
+      <div class="earn-stats">
+        <div class="earn-stat">
+          <div class="earn-stat-label">Jobs finished</div>
+          <div class="earn-stat-value green">${e.jobsFinished}</div>
         </div>
-        <div class="debtor-amt">${_fmt(bal)}</div>
-      </div>`;
-    }).join('');
+        <div class="earn-stat">
+          <div class="earn-stat-label">Jobs taken on</div>
+          <div class="earn-stat-value">${e.jobsCreated}</div>
+        </div>
+        <div class="earn-stat">
+          <div class="earn-stat-label">Value completed</div>
+          <div class="earn-stat-value accent">${_fmt(e.totalValue)}</div>
+        </div>
+        <div class="earn-stat">
+          <div class="earn-stat-label">Deposits received</div>
+          <div class="earn-stat-value amber">${_fmt(e.depositsIn)}</div>
+        </div>
+      </div>
+
+      ${e.completed.length ? `
+        <div class="section-label" style="margin-top:16px">Completed — ${periodLabel}</div>
+        ${e.completed.map(o => `
+          <div class="debtor-row">
+            <div>
+              <div class="debtor-name">${o.name}</div>
+              <div class="debtor-meta">${o.style} · Due ${o.due_date}</div>
+            </div>
+            <div class="debtor-amt" style="color:var(--green)">${_fmt(o.price)}</div>
+          </div>`).join('')}
+      ` : `<div class="empty-state" style="padding:28px 0"><p>No completed orders ${periodLabel.toLowerCase()}.</p></div>`}
+    `;
   }
 
   /* ── Customers page ─────────────────────────────────────────── */
@@ -311,6 +365,6 @@ const Render = (() => {
     box.style.display = 'block';
   }
 
-  return { calStrip, overdueBanner, jobList, money, customers, autocomplete };
+  return { calStrip, overdueBanner, jobList, money, customers, autocomplete, earnings: _renderEarnings };
 
 })();

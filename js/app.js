@@ -40,7 +40,7 @@ document.addEventListener('DOMContentLoaded', async () => {
      PAGE ROUTING
   ══════════════════════════════════════════════════════════════ */
 
-  function loadPage(pageId) {
+  async function loadPage(pageId) {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     const page = document.getElementById(pageId);
     if (page) page.classList.add('active');
@@ -51,7 +51,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (pageId === 'jobs-page')      { Render.calStrip(); Render.overdueBanner(); Render.jobList(); }
     if (pageId === 'money-page')     { Render.money(); }
     if (pageId === 'customers-page') { Render.customers(''); }
-    if (pageId === 'add-page')       { resetAddForm(); }
+    if (pageId === 'add-page')       { await resetAddForm(); }
   }
 
   window.loadPage = loadPage;
@@ -119,6 +119,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     const id = e.target.dataset.id ? parseInt(e.target.dataset.id) : null;
     if (!id) return;
 
+    // Edit
+    if (e.target.classList.contains('btn-edit')) {
+      const o = DB.one(`SELECT * FROM orders WHERE id = ?`, [id]);
+      if (!o) return;
+      document.getElementById('edit-id').value      = o.id;
+      document.getElementById('edit-name').value    = o.name;
+      document.getElementById('edit-phone').value   = o.phone   || '';
+      document.getElementById('edit-style').value   = o.style   || '';
+      document.getElementById('edit-notes').value   = o.notes   || '';
+      document.getElementById('edit-price').value   = o.price   || '';
+      document.getElementById('edit-deposit').value = o.deposit || '';
+      document.getElementById('edit-date').value    = o.due_date;
+      document.getElementById('edit-modal-overlay').classList.add('show');
+      return;
+    }
+
     // Mark ready / sewing
     if (e.target.classList.contains('btn-toggle')) {
       await Orders.toggle(id);
@@ -152,6 +168,28 @@ document.addEventListener('DOMContentLoaded', async () => {
       Render.overdueBanner();
       Render.jobList();
       UI.toast('Order deleted.', 'ok');
+    }
+  });
+
+
+  /* ══════════════════════════════════════════════════════════════
+     FABRIC PHOTO SLOT
+  ══════════════════════════════════════════════════════════════ */
+
+  document.getElementById('photo-slot-fabric')?.addEventListener('click', async e => {
+    // Clear button inside the slot
+    if (e.target.classList.contains('photo-slot-clear')) {
+      e.stopPropagation();
+      await ImageManager.remove('draft_fabric');
+      await ImageManager.renderSlot('fabric', null);
+      document.getElementById('in-swatch').value = '';
+      return;
+    }
+    // Capture new photo
+    const key = await ImageManager.capture('fabric');
+    if (key) {
+      await ImageManager.renderSlot('fabric', key);
+      document.getElementById('in-swatch').value = key; // marks that a draft exists
     }
   });
 
@@ -195,8 +233,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       price    : parseFloat(document.getElementById('in-price')?.value)   || 0,
       deposit  : parseFloat(document.getElementById('in-deposit')?.value) || 0,
       due_date : document.getElementById('in-date')?.value || State.get('today'),
-      swatch   : document.getElementById('in-swatch')?.value.trim()  || '',
+      swatch   : '',  // filled in after we get the new id
     });
+
+    // Promote draft fabric photo → permanent key; store key in swatch column
+    const newOrder = DB.one(`SELECT id FROM orders ORDER BY id DESC LIMIT 1`);
+    if (newOrder) {
+      const permKey = await ImageManager.promote('fabric', newOrder.id);
+      if (permKey) {
+        DB.run(`UPDATE orders SET swatch = ? WHERE id = ?`, [permKey, newOrder.id]);
+        await DB.persist();
+      }
+    }
 
     UI.toast('Order saved.', 'ok');
     UI.status('saved');
@@ -205,7 +253,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadPage('jobs-page');
   });
 
-  function resetAddForm() {
+  async function resetAddForm() {
     ['in-name','in-phone','in-style','in-notes','in-price','in-deposit','in-date','in-swatch']
       .forEach(id => {
         const el = document.getElementById(id);
@@ -213,22 +261,66 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
     const box = document.getElementById('autocomplete-box');
     if (box) box.style.display = 'none';
-    // Reset fabric passport preview
-    if (typeof clearFabricPhoto === 'function') {
-      const passportInner = document.getElementById('fabric-passport-inner');
-      if (passportInner) {
-        document.getElementById('fabric-passport')?.classList.remove('has-image');
-        passportInner.innerHTML = `
-          <svg class="fabric-passport-placeholder" viewBox="0 0 40 40" fill="none">
-            <rect x="4" y="4" width="32" height="32" rx="4" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 3"/>
-            <circle cx="20" cy="16" r="5" stroke="currentColor" stroke-width="1.5"/>
-            <path d="M10 34c0-5.5 4.5-10 10-10s10 4.5 10 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-          </svg>
-          <span class="fabric-passport-label">Tap to snap<br>fabric photo</span>
-        `;
-      }
-    }
+    // Reset fabric photo slot to placeholder and clear any lingering draft
+    await ImageManager.remove('draft_fabric');
+    await ImageManager.renderSlot('fabric', null);
   }
+
+
+  /* ══════════════════════════════════════════════════════════════
+     EDIT ORDER MODAL
+  ══════════════════════════════════════════════════════════════ */
+
+  function _closeEditModal() {
+    document.getElementById('edit-modal-overlay').classList.remove('show');
+  }
+
+  document.getElementById('edit-modal-close')?.addEventListener('click', _closeEditModal);
+  document.getElementById('edit-cancel')?.addEventListener('click',      _closeEditModal);
+  document.getElementById('edit-modal-overlay')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('edit-modal-overlay')) _closeEditModal();
+  });
+
+  document.getElementById('btn-save-edit')?.addEventListener('click', async () => {
+    const id = parseInt(document.getElementById('edit-id').value);
+    if (!id) return;
+
+    const name = document.getElementById('edit-name').value.trim();
+    if (!name) { UI.toast('Customer name is required.', 'err'); return; }
+
+    // Preserve existing swatch — edit modal doesn't touch photos
+    const existing = DB.one(`SELECT swatch FROM orders WHERE id = ?`, [id]);
+
+    await Orders.update(id, {
+      name,
+      phone    : document.getElementById('edit-phone').value.trim()   || '',
+      style    : document.getElementById('edit-style').value.trim()   || '',
+      notes    : document.getElementById('edit-notes').value.trim()   || '',
+      price    : parseFloat(document.getElementById('edit-price').value)   || 0,
+      deposit  : parseFloat(document.getElementById('edit-deposit').value) || 0,
+      due_date : document.getElementById('edit-date').value || State.get('today'),
+      swatch   : existing?.swatch || '',
+    });
+
+    _closeEditModal();
+    Render.calStrip();
+    Render.overdueBanner();
+    Render.jobList();
+    UI.toast('Order updated.', 'ok');
+    UI.status('saved');
+  });
+
+
+  /* ══════════════════════════════════════════════════════════════
+     MONEY PAGE — earnings period tabs
+  ══════════════════════════════════════════════════════════════ */
+
+  document.querySelectorAll('.earn-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      State.set('earningsPeriod', btn.dataset.period);
+      Render.earnings();
+    });
+  });
 
 
   /* ══════════════════════════════════════════════════════════════
